@@ -1,5 +1,5 @@
 use super::{
-    backend::mem::{BlockRequest, DatabaseRef, State, state},
+    backend::mem::{BlockRequest, DatabaseRef, State},
     sign::build_typed_transaction,
 };
 use crate::{
@@ -35,6 +35,7 @@ use alloy_consensus::{
 };
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
+use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
 use alloy_network::{
     AnyRpcBlock, AnyRpcTransaction, BlockResponse, Ethereum, NetworkWallet, TransactionBuilder,
     TransactionResponse, eip2718::Decodable2718,
@@ -95,7 +96,10 @@ use revm::{
     primitives::eip7702::PER_EMPTY_ACCOUNT_COST,
 };
 use std::{sync::Arc, time::Duration};
-use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
+use tokio::{
+    sync::mpsc::{UnboundedReceiver, unbounded_channel},
+    try_join,
+};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
@@ -761,12 +765,9 @@ impl EthApi {
         block_number: Option<BlockId>,
     ) -> Result<alloy_rpc_types::eth::AccountInfo> {
         node_info!("eth_getAccountInfo");
-        let account = self
-            .backend
-            .get_account_at_block(address, Some(self.block_request(block_number).await?))
-            .await?;
-        let code =
-            self.backend.get_code(address, Some(self.block_request(block_number).await?)).await?;
+        let account = self.get_account(address, block_number);
+        let code = self.get_code(address, block_number);
+        let (account, code) = try_join!(account, code)?;
         Ok(alloy_rpc_types::eth::AccountInfo {
             balance: account.balance,
             nonce: account.nonce,
@@ -2959,13 +2960,13 @@ impl EthApi {
                 .with_database_at(Some(block_request), |state, mut block| {
                     let mut cache_db = CacheDB::new(state);
                     if let Some(state_overrides) = overrides.state {
-                        state::apply_state_overrides(
+                        apply_state_overrides(
                             state_overrides.into_iter().collect(),
                             &mut cache_db,
                         )?;
                     }
                     if let Some(block_overrides) = overrides.block {
-                        state::apply_block_overrides(*block_overrides, &mut cache_db, &mut block);
+                        cache_db.apply_block_overrides(*block_overrides, &mut block);
                     }
                     this.do_estimate_gas_with_state(request, &cache_db as &dyn DatabaseRef, block)
                 })
