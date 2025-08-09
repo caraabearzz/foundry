@@ -663,6 +663,8 @@ forgetest_init!(can_prioritise_closer_lib_remappings, |prj, cmd| {
 // remapping.
 // See <https://github.com/foundry-rs/foundry/issues/9146>
 // Test that
+// - single file remapping is properly added, see
+// <https://github.com/foundry-rs/foundry/issues/6706> and <https://github.com/foundry-rs/foundry/issues/8499>
 // - project defined `@openzeppelin/contracts` remapping is added
 // - library defined `@openzeppelin/contracts-upgradeable` remapping is added
 // - library defined `@openzeppelin/contracts/upgradeable` remapping is not added as it conflicts
@@ -672,6 +674,7 @@ forgetest_init!(can_prioritise_project_remappings, |prj, cmd| {
     let mut config = cmd.config();
     // Add `@utils/` remapping in project config.
     config.remappings = vec![
+        Remapping::from_str("@utils/libraries/Contract.sol=src/Contract.sol").unwrap().into(),
         Remapping::from_str("@utils/=src/").unwrap().into(),
         Remapping::from_str("@openzeppelin/contracts=lib/openzeppelin-contracts/").unwrap().into(),
     ];
@@ -699,6 +702,7 @@ forgetest_init!(can_prioritise_project_remappings, |prj, cmd| {
 
     cmd.args(["remappings", "--pretty"]).assert_success().stdout_eq(str![[r#"
 Global:
+- @utils/libraries/Contract.sol=src/Contract.sol
 - @utils/=src/
 - @openzeppelin/contracts/=lib/openzeppelin-contracts/
 - @openzeppelin/contracts-upgradeable/=lib/dep1/lib/openzeppelin-upgradeable/
@@ -1121,6 +1125,7 @@ corpus_min_size = 0
 failure_persist_dir = "cache/invariant"
 show_metrics = true
 show_solidity = false
+show_edge_coverage = false
 
 [labels]
 
@@ -1234,7 +1239,8 @@ exclude = []
     "failure_persist_dir": "cache/invariant",
     "show_metrics": true,
     "timeout": null,
-    "show_solidity": false
+    "show_solidity": false,
+    "show_edge_coverage": false
   },
   "ffi": false,
   "allow_internal_expect_revert": false,
@@ -1840,4 +1846,21 @@ contract Counter {
     assert_eq!("\"istanbul\"", evm_version.unwrap().to_string());
     assert_eq!("true", enabled.unwrap().to_string());
     assert_eq!("800", runs.unwrap().to_string());
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11227>
+forgetest_init!(test_exclude_lints_config, |prj, cmd| {
+    prj.update_config(|config| {
+        config.lint.exclude_lints = vec![
+            "asm-keccak256".to_string(),
+            "incorrect-shift".to_string(),
+            "divide-before-multiply".to_string(),
+            "mixed-case-variable".to_string(),
+            "mixed-case-function".to_string(),
+            "screaming-snake-case-const".to_string(),
+            "screaming-snake-case-immutable".to_string(),
+            "unwrapped-modifier-logic".to_string(),
+        ]
+    });
+    cmd.args(["lint"]).assert_success().stdout_eq(str![""]);
 });
